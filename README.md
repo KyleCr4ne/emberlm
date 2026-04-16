@@ -30,11 +30,9 @@ All models use the same C++ code path — architecture differences (GQA head cou
 - Chat (port 8000): solo mode or side-by-side comparison of two models, with per-slot controls for temperature, top_k, top_p, seed, and thinking budget. Stop and clear buttons.
 - Training monitor (port 8001): real-time loss curves via chart.js, run selector, hyperparameter display.
 
-<!-- Screenshot placeholder: chat UI side-by-side -->
-<!-- ![SBS Chat](docs/sbs_chat.png) -->
+![SBS Chat](docs/sbs_chat.png)
 
-<!-- Screenshot placeholder: training monitor -->
-<!-- ![Training Monitor](docs/train_monitor.png) -->
+![Training Monitor](docs/train_monitor.png)
 
 ## Experiments
 
