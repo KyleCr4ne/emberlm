@@ -1,0 +1,11 @@
+build/
+.venv/
+models/
+data/
+runs/
+runs_eval/
+__pycache__/
+*.egg-info/
+*.pyc
+.cache/
+*.safetensors

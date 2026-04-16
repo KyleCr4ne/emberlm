@@ -1,0 +1,17 @@
+{
+  "init_weights": "models/Qwen3-0.6B/fp32/model.safetensors",
+  "data_dir": "data/opus_reasoning_qwen3",
+  "seq_len": 1024,
+  "batch_size": 1,
+  "grad_accum_steps": 4,
+  "total_steps": 2300,
+  "warmup_steps": 100,
+  "lr": 2e-4,
+  "min_lr_ratio": 0.1,
+  "weight_decay": 0.1,
+  "clip_grad_norm": 1.0,
+  "val_every": 100,
+  "save_every": 500,
+  "log_every": 1,
+  "seed": 42
+}

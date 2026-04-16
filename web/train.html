@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ctd_train — live loss</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --fg: #e6edf3;
+    --muted: #7d8590;
+    --accent: #ffa657;
+    --val: #58a6ff;
+    --panel: #161b22;
+    --border: #30363d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 "Inter", system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header select { background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; }
+  .main { display: grid; grid-template-columns: 1fr 280px; gap: 16px; padding: 16px 20px; }
+  .chart-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; height: calc(100vh - 110px); position: relative; }
+  .stats { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; height: fit-content; }
+  .stats h2 { margin: 0 0 10px 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-variant-numeric: tabular-nums; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; text-align: right; }
+  .config { margin-top: 16px; font-size: 12px; }
+  .config pre { background: #0b0f14; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow: auto; max-height: 300px; color: var(--muted); }
+  .legend { position: absolute; top: 16px; right: 20px; display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ctd_train</h1>
+  <label>run:
+    <select id="run-select"></select>
+  </label>
+  <span id="status" style="color: var(--muted); margin-left: auto;">connecting…</span>
+</header>
+<div class="main">
+  <div class="chart-wrap">
+    <div class="legend">
+      <span><span class="dot" style="background: var(--accent);"></span>train (EMA)</span>
+      <span><span class="dot" style="background: var(--val);"></span>val</span>
+    </div>
+    <canvas id="loss-chart"></canvas>
+  </div>
+  <aside class="stats">
+    <h2>live</h2>
+    <dl class="kv" id="live"></dl>
+    <div class="config">
+      <h2 style="margin-top:16px">config</h2>
+      <pre id="cfg">—</pre>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  const POLL_MS = 2000;
+  const EMA_ALPHA = 0.1;  // smoothing factor for the train loss curve
+
+  const runSelect = document.getElementById('run-select');
+  const statusEl = document.getElementById('status');
+  const liveEl = document.getElementById('live');
+  const cfgEl = document.getElementById('cfg');
+
+  const ctx = document.getElementById('loss-chart').getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'train loss',
+          data: [],
+          parsing: false,
+          showLine: false,
+          pointRadius: 1.5,
+          pointBackgroundColor: 'rgba(255,166,87,0.25)',
+          pointBorderWidth: 0,
+        },
+        {
+          label: 'train EMA',
+          data: [],
+          parsing: false,
+          borderColor: '#ffa657',
+          borderWidth: 2,
+          tension: 0.2,
+          pointRadius: 0,
+          fill: false,
+        },
+        {
+          label: 'val loss',
+          data: [],
+          parsing: false,
+          borderColor: '#58a6ff',
+          backgroundColor: '#58a6ff',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `step ${items[0].parsed.x}`,
+            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)}`,
+          },
+        },
+      },
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'step', color: '#7d8590' }, grid: { color: '#21262d' }, ticks: { color: '#7d8590' } },
+        y: { title: { display: true, text: 'loss', color: '#7d8590' }, grid: { color: '#21262d' }, ticks: { color: '#7d8590' } },
+      },
+    },
+  });
+
+  function kv(label, value) {
+    return `<dt>${label}</dt><dd>${value}</dd>`;
+  }
+  function fmt(n, digits = 4) {
+    if (n == null || !isFinite(n)) return '—';
+    if (Math.abs(n) >= 1000) return n.toFixed(0);
+    return n.toPrecision(digits);
+  }
+  function fmtTime(s) {
+    if (!s || !isFinite(s)) return '—';
+    const m = Math.floor(s / 60), r = Math.floor(s % 60);
+    return `${m}m ${r.toString().padStart(2, '0')}s`;
+  }
+
+  async function loadRuns() {
+    const r = await fetch('/api/runs');
+    const j = await r.json();
+    const prev = runSelect.value;
+    runSelect.innerHTML = '';
+    for (const name of j.runs) {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      runSelect.appendChild(opt);
+    }
+    if (j.runs.includes(prev)) runSelect.value = prev;
+    else if (j.runs.length > 0) runSelect.value = j.runs[j.runs.length - 1];
+    return runSelect.value;
+  }
+
+  async function refresh(name) {
+    if (!name) return;
+    try {
+      const r = await fetch(`/api/runs/${name}/loss`);
+      const j = await r.json();
+      updateChart(j.events || []);
+      updateConfig(j.config);
+      statusEl.textContent = `${(j.events || []).length} events · updated ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      statusEl.textContent = `error: ${e}`;
+    }
+  }
+
+  function updateChart(events) {
+    const train = [];
+    const trainEMA = [];
+    const val = [];
+    let ema = null;
+    let last = null;
+    let totalSteps = null;
+    for (const e of events) {
+      if (e.phase === 'train') {
+        train.push({ x: e.step, y: e.loss });
+        ema = ema == null ? e.loss : ema + EMA_ALPHA * (e.loss - ema);
+        trainEMA.push({ x: e.step, y: ema });
+        last = e;
+      } else if (e.phase === 'val') {
+        val.push({ x: e.step, y: e.loss });
+      }
+    }
+    chart.data.datasets[0].data = train;
+    chart.data.datasets[1].data = trainEMA;
+    chart.data.datasets[2].data = val;
+    chart.update('none');
+
+    // Live panel.
+    const lastVal = val.length ? val[val.length - 1] : null;
+    const firstStep = events.find(e => e.phase === 'train');
+    const cfgStr = cfgEl.textContent;
+    try {
+      const cfg = JSON.parse(cfgStr);
+      totalSteps = cfg.total_steps || null;
+    } catch {}
+    const stepStr = last ? (totalSteps ? `${last.step} / ${totalSteps}` : `${last.step}`) : '—';
+    let etaStr = '—';
+    if (last && totalSteps && firstStep && last.step > firstStep.step) {
+      const elapsed = last.wall_s;
+      const perStep = elapsed / last.step;
+      const remaining = perStep * (totalSteps - last.step);
+      etaStr = fmtTime(remaining);
+    }
+    liveEl.innerHTML =
+      kv('step', stepStr) +
+      kv('train loss', last ? fmt(last.loss) : '—') +
+      kv('train EMA', ema != null ? fmt(ema) : '—') +
+      kv('val loss', lastVal ? fmt(lastVal.y) : '—') +
+      kv('lr', last ? fmt(last.lr, 3) : '—') +
+      kv('grad_norm', last ? fmt(last.grad_norm, 3) : '—') +
+      kv('tok/s', last ? fmt(last.tokens_per_sec, 4) : '—') +
+      kv('elapsed', last ? fmtTime(last.wall_s) : '—') +
+      kv('ETA', etaStr);
+  }
+
+  function updateConfig(cfg) {
+    cfgEl.textContent = cfg ? JSON.stringify(cfg, null, 2) : '—';
+  }
+
+  runSelect.addEventListener('change', () => refresh(runSelect.value));
+
+  (async function loop() {
+    const name = await loadRuns();
+    await refresh(name);
+    setInterval(async () => {
+      // Periodically re-list runs in case a new one appears; current selection is preserved.
+      if (document.visibilityState === 'visible') {
+        const current = runSelect.value;
+        await loadRuns();
+        // If user picked one, keep it; otherwise refresh the (possibly new) default.
+        if (runSelect.value !== current && current) runSelect.value = current;
+        await refresh(runSelect.value);
+      }
+    }, POLL_MS);
+  })();
+</script>
+</body>
+</html>

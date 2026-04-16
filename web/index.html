@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ctd chat</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#0f1115; --panel:#161a22; --bubble-user:#2c6cff; --bubble-asst:#1f2530;
+    --text:#e7eaf0; --muted:#8a93a6; --border:#252b37; --stop:#c0392b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+  }
+  header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--panel); gap: 12px;
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .header-right { display:flex; align-items:center; gap:10px; }
+  .header-btn {
+    padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px;
+  }
+  .header-btn.stop { background: var(--stop); color: #fff; border-color: var(--stop); }
+  .header-btn:disabled { opacity: .4; cursor: default; }
+
+  #columns {
+    flex: 1; display: grid; gap: 1px; background: var(--border);
+    overflow: hidden;
+  }
+  #columns.solo { grid-template-columns: 1fr; }
+  #columns.sbs  { grid-template-columns: 1fr 1fr; }
+  .slot { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  .slot-head {
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .slot-title { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, monospace; }
+  .slot-controls { display:flex; gap:8px; align-items:center; flex-wrap: wrap; font-size:11px; color:var(--muted); }
+  .slot-controls label { display:flex; gap:4px; align-items:center; }
+  .slot-controls input[type=number] {
+    width: 60px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 2px 5px; font-size:11px;
+  }
+  .slot-controls input[type=checkbox] { margin: 0; }
+
+  .log {
+    flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { max-width: 95%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-wrap: break-word; }
+  .user { align-self: flex-end; background: var(--bubble-user); color: #fff; }
+  .asst { align-self: flex-start; background: var(--bubble-asst); }
+  .asst.pending::after { content: "▍"; opacity: .6; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  form {
+    display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  textarea {
+    flex: 1; min-height: 44px; max-height: 140px; resize: vertical;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; font: inherit;
+  }
+  button.primary {
+    padding: 0 18px; border-radius: 10px; border: 0; background: var(--bubble-user);
+    color: #fff; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>ctd chat</h1>
+      <div class="sub" id="mode-sub">…loading</div>
+    </div>
+    <div class="header-right">
+      <button class="header-btn" id="clear-btn" type="button">Clear</button>
+      <button class="header-btn stop" id="stop-btn" type="button" disabled>Stop</button>
+    </div>
+  </header>
+
+  <div id="columns"></div>
+
+  <form id="f">
+    <textarea id="inp" placeholder="Ask something… (Shift+Enter = newline)" autofocus></textarea>
+    <button id="send" class="primary" type="submit">Send</button>
+  </form>
+
+<script>
+const columnsEl = document.getElementById('columns');
+const form = document.getElementById('f');
+const send = document.getElementById('send');
+const inp = document.getElementById('inp');
+const stopBtn = document.getElementById('stop-btn');
+const clearBtn = document.getElementById('clear-btn');
+const modeSub = document.getElementById('mode-sub');
+
+let MODE = null;           // "solo" | "sbs"
+let SLOTS = [];            // [{id, label}, ...]
+let history = [];          // shared prompt history
+let currentReqId = null;   // for /stop
+let slotRefs = {};         // slotId -> { log, asst, controls }
+
+const DEFAULTS = { max_new_tokens: 256, temperature: 0.7, top_k: 50, top_p: 0.9, seed: 0, thinking_token_budget: 0 };
+
+function ctrl(label, key, type, extra = {}) {
+  const wrap = document.createElement('label');
+  const txt = document.createElement('span');
+  txt.textContent = label;
+  const input = document.createElement('input');
+  input.type = type;
+  input.dataset.key = key;
+  if (type === 'number') {
+    input.value = extra.value ?? DEFAULTS[key];
+    if (extra.step != null) input.step = extra.step;
+    if (extra.min != null) input.min = extra.min;
+    if (extra.max != null) input.max = extra.max;
+  } else if (type === 'checkbox') {
+    input.checked = extra.checked ?? false;
+  }
+  wrap.appendChild(txt);
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function buildSlotPanel(slot) {
+  const col = document.createElement('div');
+  col.className = 'slot';
+
+  const head = document.createElement('div');
+  head.className = 'slot-head';
+  const title = document.createElement('div');
+  title.className = 'slot-title';
+  title.textContent = slot.label;
+  head.appendChild(title);
+
+  const controls = document.createElement('div');
+  controls.className = 'slot-controls';
+  controls.appendChild(ctrl('T',     'temperature',           'number', { step: 0.05, min: 0, max: 2 }));
+  controls.appendChild(ctrl('top_k', 'top_k',                 'number', { min: 0 }));
+  controls.appendChild(ctrl('top_p', 'top_p',                 'number', { step: 0.05, min: 0, max: 1 }));
+  controls.appendChild(ctrl('max',   'max_new_tokens',        'number', { min: 1 }));
+  controls.appendChild(ctrl('seed',  'seed',                  'number', { min: 0 }));
+  // thinking budget + toggle
+  const thinkWrap = document.createElement('label');
+  const thinkTxt = document.createElement('span');
+  thinkTxt.textContent = 'think';
+  const thinkOn = document.createElement('input');
+  thinkOn.type = 'checkbox';
+  thinkOn.dataset.key = 'thinking_on';
+  const thinkN = document.createElement('input');
+  thinkN.type = 'number';
+  thinkN.min = 1;
+  thinkN.value = 128;
+  thinkN.dataset.key = 'thinking_token_budget';
+  thinkN.style.width = '70px';
+  thinkWrap.appendChild(thinkTxt);
+  thinkWrap.appendChild(thinkOn);
+  thinkWrap.appendChild(thinkN);
+  controls.appendChild(thinkWrap);
+
+  head.appendChild(controls);
+  col.appendChild(head);
+
+  const logEl = document.createElement('div');
+  logEl.className = 'log';
+  col.appendChild(logEl);
+
+  columnsEl.appendChild(col);
+  slotRefs[slot.id] = { logEl, controls, asst: null };
+}
+
+function readParams(slotId) {
+  const { controls } = slotRefs[slotId];
+  const out = { ...DEFAULTS };
+  for (const el of controls.querySelectorAll('input')) {
+    const k = el.dataset.key;
+    if (k === 'thinking_on') continue;
+    if (el.type === 'number') out[k] = parseFloat(el.value);
+  }
+  const thinkOn = controls.querySelector('input[data-key=thinking_on]').checked;
+  if (!thinkOn) out.thinking_token_budget = 0;
+  return out;
+}
+
+function addBubble(slotId, role, text = '') {
+  const { logEl } = slotRefs[slotId];
+  const el = document.createElement('div');
+  el.className = 'msg ' + (role === 'user' ? 'user' : 'asst');
+  el.textContent = text;
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+  return el;
+}
+
+function setBusy(b) {
+  send.disabled = b;
+  stopBtn.disabled = !b;
+  inp.disabled = b;
+}
+
+async function init() {
+  const res = await fetch('/api/mode');
+  const m = await res.json();
+  MODE = m.mode;
+  SLOTS = m.slots;
+  columnsEl.classList.add(MODE);
+  modeSub.textContent = MODE === 'solo'
+    ? `solo · ${SLOTS[0].label}`
+    : `side-by-side · ${SLOTS[0].label}  vs  ${SLOTS[1].label}`;
+  for (const s of SLOTS) buildSlotPanel(s);
+}
+init().catch(e => { modeSub.textContent = 'error: ' + e.message; });
+
+function renderUserBubbles(text) {
+  for (const s of SLOTS) addBubble(s.id, 'user', text);
+}
+function openAsstBubbles() {
+  for (const s of SLOTS) {
+    const el = addBubble(s.id, 'asst', '');
+    el.classList.add('pending');
+    slotRefs[s.id].asst = { el, text: '' };
+  }
+}
+function appendDelta(slotId, delta) {
+  const a = slotRefs[slotId].asst;
+  if (!a) return;
+  a.text += delta;
+  a.el.textContent = a.text;
+  const { logEl } = slotRefs[slotId];
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function closeAsstBubbles() {
+  for (const s of SLOTS) {
+    const a = slotRefs[s.id].asst;
+    if (a) { a.el.classList.remove('pending'); slotRefs[s.id].asst = null; }
+  }
+}
+
+async function submit(text) {
+  history.push({ role: 'user', content: text });
+  renderUserBubbles(text);
+  openAsstBubbles();
+  setBusy(true);
+
+  const url = MODE === 'solo' ? '/chat' : '/chat/sbs';
+  const body = MODE === 'solo'
+    ? { messages: history, ...readParams('solo') }
+    : { messages: history, slot_a: readParams('a'), slot_b: readParams('b') };
+
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    closeAsstBubbles();
+    setBusy(false);
+    alert('fetch failed: ' + e.message);
+    return;
+  }
+  currentReqId = res.headers.get('X-Request-Id');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.replace(/^data: /, '');
+        if (!line) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.delta) appendDelta(evt.slot, evt.delta);
+        } catch (_) {}
+      }
+    }
+  } finally {
+    // Collect final assistant text from each slot into history. In SBS mode we
+    // only save slot A's reply into the shared prompt history — a downstream
+    // user turn continues the conversation with slot A's context, and slot B
+    // is treated as the "alternate universe" that didn't persist.
+    const reply = (MODE === 'solo'
+      ? (slotRefs['solo'].asst?.text ?? '')
+      : (slotRefs['a'].asst?.text ?? ''));
+    closeAsstBubbles();
+    if (reply) history.push({ role: 'assistant', content: reply });
+    currentReqId = null;
+    setBusy(false);
+    inp.focus();
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const t = inp.value.trim();
+  if (!t) return;
+  inp.value = '';
+  submit(t);
+});
+inp.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+});
+
+stopBtn.addEventListener('click', async () => {
+  if (!currentReqId) return;
+  try { await fetch('/stop/' + currentReqId, { method: 'POST' }); } catch (_) {}
+});
+
+clearBtn.addEventListener('click', () => {
+  if (!confirm('Clear conversation?')) return;
+  history = [];
+  for (const s of SLOTS) {
+    const { logEl } = slotRefs[s.id];
+    while (logEl.firstChild) logEl.removeChild(logEl.firstChild);
+    slotRefs[s.id].asst = null;
+  }
+});
+</script>
+</body>
+</html>

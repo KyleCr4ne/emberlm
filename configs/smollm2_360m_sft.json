@@ -1,0 +1,17 @@
+{
+  "init_weights": "models/SmolLM2-360M-Instruct/fp32/model.safetensors",
+  "data_dir": "data/opus_reasoning",
+  "seq_len": 1024,
+  "batch_size": 1,
+  "grad_accum_steps": 8,
+  "total_steps": 1127,
+  "warmup_steps": 100,
+  "lr": 3e-4,
+  "min_lr_ratio": 0.1,
+  "weight_decay": 0.1,
+  "clip_grad_norm": 1.0,
+  "val_every": 100,
+  "save_every": 500,
+  "log_every": 1,
+  "seed": 42
+}

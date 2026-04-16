@@ -1,0 +1,33 @@
+[project]
+name = "cpp-torch-dev"
+version = "0.1.0"
+description = "Python helpers for cpp_torch_dev: model fetching, HF reference, tests"
+requires-python = ">=3.12"
+dependencies = [
+  "torch>=2.5.0",
+  "transformers>=4.45.0",
+  "safetensors>=0.4.5",
+  "huggingface_hub>=0.25.0",
+  "numpy>=2.0",
+  "sentencepiece",
+  "tokenizers>=0.20",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "datasets>=3.0",
+  "tqdm>=4.66",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pre-commit>=4.0",
+  "ruff>=0.7",
+]
+
+[tool.uv]
+# Use the CUDA 12.x PyTorch wheels (default PyPI wheels ship with CUDA 12.x runtime bundled).
+# uv will pick the right wheel for linux-x86_64 automatically.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

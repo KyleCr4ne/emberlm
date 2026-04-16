@@ -1,0 +1,19 @@
+{
+  "init_weights": "models/Llama-3.2-1B-Instruct/fp32/model.safetensors",
+  "data_dir": "data/opus_reasoning_llama",
+  "seq_len": 1024,
+  "batch_size": 1,
+  "grad_accum_steps": 2,
+  "total_steps": 4558,
+  "warmup_steps": 100,
+  "lr": 1e-4,
+  "min_lr_ratio": 0.1,
+  "weight_decay": 0.1,
+  "clip_grad_norm": 1.0,
+  "val_every": 100,
+  "save_every": 500,
+  "log_every": 1,
+  "seed": 42,
+  "offload_optimizer": true,
+  "gradient_checkpointing": true
+}

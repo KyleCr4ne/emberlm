@@ -1,0 +1,19 @@
+add_executable(ctd_generate
+  ctd_generate/main.cpp
+)
+target_link_libraries(ctd_generate
+  PRIVATE
+    ctd
+    nlohmann_json::nlohmann_json
+    ctd_warnings
+)
+
+add_executable(ctd_train
+  ctd_train/main.cpp
+)
+target_link_libraries(ctd_train
+  PRIVATE
+    ctd
+    nlohmann_json::nlohmann_json
+    ctd_warnings
+)
